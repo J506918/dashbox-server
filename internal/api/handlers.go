@@ -122,12 +122,23 @@ func (r *Router) updateVehicleInfo(c *gin.Context) {
 // ── Device Params ───────────────────────────────────────────────
 
 func (r *Router) getDeviceParams(c *gin.Context) {
-	params, err := db.GetDeviceParams(r.db, c.Param("id"))
+	deviceID := c.Param("id")
+	req := &ws.RPCRequest{
+		JSONRPC: "2.0",
+		Method:  "getParams",
+		ID:      1,
+		Params:  json.RawMessage("{}"),
+	}
+	resp, err := r.hub.SendRPC(deviceID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"params": params})
+	if resp.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": resp.Error.Message})
+		return
+	}
+	c.JSON(http.StatusOK, resp.Result)
 }
 
 type SaveParamsRequest struct {

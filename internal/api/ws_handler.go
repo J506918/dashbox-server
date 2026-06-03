@@ -195,16 +195,12 @@ func (r *Router) handleRPCMessage(client *ws.Client, deviceID string, req *ws.RP
 		}
 		if err := json.Unmarshal(req.Params, &data); err == nil && len(data.Params) > 0 {
 			log.Printf("[ws] params_sync: %d params from %s", len(data.Params), deviceID)
-			if err := db.SaveDeviceParams(r.db, deviceID, data.Params); err != nil {
-				log.Printf("[ws] params_sync: save error: %v", err)
-			} else {
-				// Push to all connected App clients as params_update
-				updateMsg, _ := json.Marshal(map[string]interface{}{
-					"method": "params_update",
-					"params": data.Params,
-				})
-				r.hub.NotifyApp(deviceID, updateMsg)
-			}
+			// Forward to all connected App clients as params_update
+			updateMsg, _ := json.Marshal(map[string]interface{}{
+				"method": "params_update",
+				"params": data.Params,
+			})
+			r.hub.NotifyApp(deviceID, updateMsg)
 		}
 		r.wsReply(client, req.ID, "ok")
 
