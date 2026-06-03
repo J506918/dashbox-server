@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -14,11 +15,12 @@ import (
 
 // Hub manages WebSocket connections from devices and app clients.
 type Hub struct {
-	db        *gorm.DB
-	mu        sync.RWMutex
-	devices   map[string]*Client              // deviceID -> client
-	appClients map[string]map[*Client]struct{} // deviceID -> set of app clients
-	pending   map[string]chan *RPCResponse
+	db           *gorm.DB
+	mu           sync.RWMutex
+	devices      map[string]*Client              // deviceID -> client
+	appClients   map[string]map[*Client]struct{} // deviceID -> set of app clients
+	pending      map[string]chan *RPCResponse
+	reqIDCounter atomic.Int64
 }
 
 type Client struct {
@@ -138,9 +140,8 @@ func (h *Hub) SendRPC(deviceID string, req *RPCRequest) (*RPCResponse, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	if req.ID == nil {
-		req.ID = 1
-	}
+	// Always assign a unique ID — prevents concurrent requests from clobbering each other
+	req.ID = h.reqIDCounter.Add(1)
 
 	// Create a response channel for this request
 	respChan := make(chan *RPCResponse, 1)
@@ -157,6 +158,7 @@ func (h *Hub) SendRPC(deviceID string, req *RPCRequest) (*RPCResponse, error) {
 	data, _ := json.Marshal(req)
 	select {
 	case client.Send <- data:
+		log.Printf("[rpc] %s → device %s queued (%d bytes)", req.Method, deviceID, len(data))
 	default:
 		return nil, ErrSendBufferFull
 	}
@@ -164,8 +166,10 @@ func (h *Hub) SendRPC(deviceID string, req *RPCRequest) (*RPCResponse, error) {
 	// Wait for response with timeout
 	select {
 	case resp := <-respChan:
+		log.Printf("[rpc] %s ← device %s response", req.Method, deviceID)
 		return resp, nil
 	case <-time.After(30 * time.Second):
+		log.Printf("[rpc] %s → device %s TIMEOUT (30s, no response)", req.Method, deviceID)
 		return nil, errors.New("rpc timeout")
 	}
 }

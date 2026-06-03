@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -152,11 +153,22 @@ func (r *Router) saveDeviceParams(c *gin.Context) {
 		return
 	}
 
-	if err := db.SaveDeviceParams(r.db, c.Param("id"), req.Params); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// Forward to device — server does NOT cache params
+	paramsJSON, _ := json.Marshal(req.Params)
+	rpcReq := &ws.RPCRequest{
+		JSONRPC: "2.0",
+		Method:  "saveParams",
+		Params:  json.RawMessage(fmt.Sprintf(`{"params":%s}`, paramsJSON)),
+	}
+	resp, err := r.hub.SendRPC(c.Param("id"), rpcReq)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
-
+	if resp.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": resp.Error.Message})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
