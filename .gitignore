@@ -1,0 +1,3 @@
+*.pem
+dashbox-server
+docker-compose.yml
