@@ -42,14 +42,14 @@ func (r *Router) wsHandler(c *gin.Context) {
 		return
 	}
 
-	// Heartbeat: server pings every 15s; if no pong within 35s, connection dies
+	// Heartbeat: server pings every 5s; if no pong within 20s, device offline
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(35 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 		db.UpdateDeviceOnline(r.db, dev.DeviceID, true)
 		return nil
 	})
 	go func() {
-		ticker := time.NewTicker(15 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {

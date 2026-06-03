@@ -23,9 +23,6 @@ func main() {
 		log.Fatalf("Failed to migrate: %v", err)
 	}
 
-	// Clear stale online flags from previous run (connections don't survive restart)
-	db.MarkAllOffline(database)
-
 	// WebSocket hub
 	hub := ws.NewHub(database)
 	go hub.Run()
