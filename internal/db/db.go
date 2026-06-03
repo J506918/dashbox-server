@@ -89,8 +89,15 @@ func ListDevicesByUser(db *gorm.DB, userID int64) ([]models.Device, error) {
 }
 
 func UpdateDeviceOnline(db *gorm.DB, deviceID string, online bool) error {
-	return db.Model(&models.Device{}).Where("device_id = ?", deviceID).
-		Updates(map[string]interface{}{"online": online, "last_seen": gorm.Expr("NOW()")}).Error
+	// Only refresh last_seen when online state actually changes
+	var current bool
+	db.Model(&models.Device{}).Where("device_id = ?", deviceID).Select("online").Scan(&current)
+
+	updates := map[string]interface{}{"online": online}
+	if online != current {
+		updates["last_seen"] = gorm.Expr("NOW()")
+	}
+	return db.Model(&models.Device{}).Where("device_id = ?", deviceID).Updates(updates).Error
 }
 
 func MarkAllOffline(db *gorm.DB) error {
