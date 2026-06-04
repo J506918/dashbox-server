@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dashbox/internal/db"
+	"dashbox/internal/models"
 	"dashbox/internal/ws"
 	"time"
 
@@ -21,25 +22,37 @@ var upgrader = websocket.Upgrader{
 func (r *Router) wsHandler(c *gin.Context) {
 	serial := c.Query("serial")
 	dongleID := c.Query("dongle_id")
-	if serial == "" || dongleID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing serial or dongle_id"})
+	if serial == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing serial"})
 		return
 	}
 
 	dev, err := db.GetDeviceBySerial(r.db, serial)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "device not registered"})
-		return
-	}
-	if dev.DeviceID != dongleID {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "dongle_id mismatch"})
-		return
+		// Auto-register new device
+		dev, err = db.CreateDevice(r.db, serial)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create device"})
+			return
+		}
+		log.Printf("[ws] Auto-registered new device: %s (serial: %s)", dev.DeviceID, serial)
 	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("[ws] Upgrade error: %v", err)
 		return
+	}
+
+	// If device has wrong/old dongle_id, tell it the correct one
+	if dev.DeviceID != dongleID {
+		fixMsg, _ := json.Marshal(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"method":  "register_device",
+			"params":  map[string]string{"dongle_id": dev.DeviceID},
+		})
+		conn.WriteMessage(websocket.TextMessage, fixMsg)
+		log.Printf("[ws] Sent fix_dongle_id: %s → %s", dongleID, dev.DeviceID)
 	}
 
 	// Heartbeat: server pings every 5s; if no pong within 20s, device offline
@@ -80,11 +93,12 @@ func (r *Router) wsHandler(c *gin.Context) {
 
 func (r *Router) wsAppHandler(c *gin.Context) {
 	token := c.Query("token")
+	deviceID := c.Query("device_id")
 	serial := c.Query("serial")
 	dongleID := c.Query("dongle_id")
 
-	if token == "" || serial == "" || dongleID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing token, serial, or dongle_id"})
+	if token == "" || (deviceID == "" && (serial == "" || dongleID == "")) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing token, and (device_id or serial+dongle_id)"})
 		return
 	}
 
@@ -94,13 +108,17 @@ func (r *Router) wsAppHandler(c *gin.Context) {
 		return
 	}
 
-	dev, err := db.GetDeviceBySerial(r.db, serial)
+	var dev *models.Device
+	if deviceID != "" {
+		dev, err = db.GetDeviceByDeviceID(r.db, deviceID)
+	} else {
+		dev, err = db.GetDeviceBySerial(r.db, serial)
+	}
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "device not found"})
 		return
 	}
-
-	if dev.DeviceID != dongleID {
+	if dongleID != "" && dev.DeviceID != dongleID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "dongle_id mismatch"})
 		return
 	}
@@ -197,7 +215,8 @@ func (r *Router) handleRPCMessage(client *ws.Client, deviceID string, req *ws.RP
 			log.Printf("[ws] params_sync: %d params from %s", len(data.Params), deviceID)
 			// Forward to all connected App clients as params_update
 			updateMsg, _ := json.Marshal(map[string]interface{}{
-				"method": "params_update",
+				"type":   "params_update",
+				"device": deviceID,
 				"params": data.Params,
 			})
 			r.hub.NotifyApp(deviceID, updateMsg)
