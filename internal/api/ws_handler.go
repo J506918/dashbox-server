@@ -64,9 +64,18 @@ func (r *Router) wsHandler(c *gin.Context) {
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
+		failCount := 0
 		for range ticker.C {
-			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
-				return
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+				failCount++
+				log.Printf("[ws] ping write error (fail #%d): %v", failCount, err)
+				if failCount >= 3 {
+					log.Printf("[ws] ping failed %d times, closing connection", failCount)
+					conn.Close()
+					return
+				}
+			} else {
+				failCount = 0
 			}
 		}
 	}()
